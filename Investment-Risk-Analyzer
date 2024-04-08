@@ -1,0 +1,139 @@
+using System;
+using System.IO;
+using Microsoft.ML;
+using Microsoft.ML.Data;
+
+public class InvestmentData
+{
+    [LoadColumn(0)]
+    public float InvestmentType { get; set; }
+
+    [LoadColumn(1)]
+    public float Amount { get; set; }
+
+    [LoadColumn(2)]
+    public float Date { get; set; }
+
+    [LoadColumn(3), ColumnName("Label")]
+    public bool IsHighRisk { get; set; }
+}
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        var dataPath = "investment_data.csv";
+        var modelPath = "investment_risk_model.zip";
+
+        var mlContext = new MLContext();
+
+        var dataView = mlContext.Data.LoadFromTextFile<InvestmentData>(dataPath, separatorChar: ',');
+
+        var dataProcessPipeline = mlContext.Transforms.Concatenate("Features", "InvestmentType", "Amount", "Date")
+            .Append(mlContext.Transforms.NormalizeMinMax("Features"))
+            .AppendCacheCheckpoint(mlContext);
+
+        var trainer = mlContext.BinaryClassification.Trainers.LogisticRegression();
+
+        var trainingPipeline = dataProcessPipeline.Append(trainer);  
+
+        var trainedModel = trainingPipeline.Fit(dataView);
+
+        mlContext.Model.Save(trainedModel, dataView.Schema, modelPath);
+        Console.WriteLine("Model saved successfully.");
+    }
+}
+-----------------------------------------------------------------------------------------------
+
+using System;
+using Microsoft.ML;
+using Microsoft.ML.Data;
+
+enum InvestmentType
+{
+    Stock,
+    Bond,
+    MutualFund,
+    ETF
+}
+
+class Investment
+{
+    public string Name { get; set; }
+    public InvestmentType Type { get; set; }
+    public decimal Amount { get; set; }
+    public DateTime Date { get; set; }
+}
+
+class InvestmentInput
+{
+    [LoadColumn(0)]
+    public float Type { get; set; }
+
+    [LoadColumn(1)]
+    public float Amount { get; set; }
+
+    [LoadColumn(2)]
+    public float Date { get; set; }
+}
+
+class InvestmentPrediction
+{
+    [ColumnName("PredictedLabel")]
+    public bool IsHighRisk { get; set; }
+}
+
+class MLInvestmentRiskAnalyzer
+{
+    private readonly PredictionEngine<InvestmentInput, InvestmentPrediction> _predictionEngine;
+
+    public MLInvestmentRiskAnalyzer(string modelFilePath)
+    {
+        var mlContext = new MLContext();
+        var model = mlContext.Model.Load(modelFilePath, out _);
+        _predictionEngine = mlContext.Model.CreatePredictionEngine<InvestmentInput, InvestmentPrediction>(model);
+    }
+
+    public string AnalyzeRisk(Investment investment)
+    {
+        var input = new InvestmentInput
+        {
+            Type = (float)investment.Type,
+            Amount = (float)investment.Amount,
+            Date = (float)investment.Date.Ticks
+        };
+
+        var prediction = _predictionEngine.Predict(input);
+        return prediction.IsHighRisk ? "High Risk" : "Low Risk";
+    }
+}
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        var mlAnalyzer = new MLInvestmentRiskAnalyzer("investment_risk_model.zip");
+
+        Investment investment1 = new Investment
+        {
+            Name = "Apple Inc. Stock",
+            Type = InvestmentType.Stock,
+            Amount = 2000,
+            Date = DateTime.Parse("2024-04-08")
+        };
+
+        Investment investment2 = new Investment
+        {
+            Name = "Government Bond",
+            Type = InvestmentType.Bond,
+            Amount = 4000,
+            Date = DateTime.Parse("2024-04-08")
+        };
+
+        string risk1 = mlAnalyzer.AnalyzeRisk(investment1);
+        string risk2 = mlAnalyzer.AnalyzeRisk(investment2);
+
+        Console.WriteLine($"Investment 1 ({investment1.Name}): {risk1}");
+        Console.WriteLine($"Investment 2 ({investment2.Name}): {risk2}");
+    }
+}
